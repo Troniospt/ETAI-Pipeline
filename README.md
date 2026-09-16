@@ -1,4 +1,14 @@
 # Baseline Predictive Pipeline -- ETAI
+20260490 António Favila Vieira
+
+WEEK 2:
+Conclusion:
+
+The logistic regression  its training and test accuracies are almost identical. Probably no overfitting. Its  accuracy its 67.8% (ok), so the model is good but still could be better.
+
+The second model seems to overfit. It has 82.9% training accuracy but only 63.1% test accuracy—a 19.8 difference. It is not dealing weel with unseen data.
+
+
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
