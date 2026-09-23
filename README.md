@@ -8,6 +8,10 @@ The logistic regression  its training and test accuracies are almost identical. 
 
 The second model seems to overfit. It has 82.9% training accuracy but only 63.1% test accuracy—a 19.8 difference. It is not dealing weel with unseen data.
 
+WEEK 3:
+Before data cleaning, the Logistic Regression model suffered from underfitting, demonstrating high stability but low predictive power with a well-aligned training accuracy of 67.9% and test accuracy of 67.8% (a minimal gap of 0.001). However, after cleaning, its training accuracy increased substantially to 83.1%, while its test performance degraded to 61.9%, causing the generalization gap to expand dramatically to 0.212. This shift indicates that while the cleaning process introduced feature transformations or encodings that allowed the linear model to better fit the training set, it ultimately induced severe overfitting to training-specific noise rather than improving its ability to evaluate unseen data
+
+In contrast, the Decision Tree model exhibited persistent overfitting across both datasets, maintaining nearly identical training and testing metrics regardless of data cleaning. Prior to cleaning, the tree scored 82.9% on training data and 63.1% on test data (a 0.198 gap), which slightly deteriorated post-cleaning to an 83.1% train accuracy and a 62.1% test accuracy (a 0.210 gap). Because unconstrained decision trees naturally memorize patterns and noise, cleaning the raw features had a negligible effect on reducing variance, demonstrating that structural regularization—such as limiting tree depth—is necessary to improve generalization rather than relying solely on data preprocessing.
 
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
