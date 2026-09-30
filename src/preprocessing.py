@@ -198,7 +198,7 @@ def split_dev_test(X, y, extras, test_size: float, random_state: int):
     report) together, so all three stay row-aligned. Returns a *development* set and a
     *locked test set*:
       - development set: everything we're allowed to learn from and compare models on.
-        Cross-validation (src/evaluate.py) splits it again into train/validation folds.
+        Cross-validation splits it into training and validation folds.
       - locked test set: never used to fit, tune, compare or choose anything. Its size and seed live in config.yaml's `test_set` section and are never changed after today.
     """
     X_dev, X_test, y_dev, y_test, extras_dev, extras_test = train_test_split(

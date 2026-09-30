@@ -18,11 +18,20 @@ def save_run(results_dir: str, config: dict, report_text: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = os.path.join(results_dir, f"run_{timestamp}.txt")
 
+    cv = config["cv"]
+    models = config.get("models", [config.get("model")])
+    model_summary = ", ".join(
+        f"{model['type']} params={model.get('params', {})}" for model in models
+    )
     header = (
         f"Run: {timestamp}\n"
-        f"Model: {config['model']['type']}  params={config['model']['params']}\n"
-        f"Test size: {config['split']['test_size']}  "
-        f"random_state: {config['split']['random_state']}\n"
+        f"Models: {model_summary}\n"
+        f"Preprocessing: encoder={config['preprocessing']['encoder']}  "
+        f"scaler={config['preprocessing']['scaler']}\n"
+        f"CV: {cv['n_splits']} stratified folds  shuffle={cv.get('shuffle', True)}  "
+        f"random_state={cv.get('random_state')}  metric={cv.get('scoring', 'accuracy')}\n"
+        f"Locked test set: size={config['test_set']['size']}  "
+        f"random_state={config['test_set']['random_state']}  (final model only)\n"
         + "=" * 60 + "\n\n"
     )
 

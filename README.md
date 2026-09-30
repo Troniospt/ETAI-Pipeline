@@ -13,6 +13,13 @@ Before data cleaning, the Logistic Regression model suffered from underfitting, 
 
 In contrast, the Decision Tree model exhibited persistent overfitting across both datasets, maintaining nearly identical training and testing metrics regardless of data cleaning. Prior to cleaning, the tree scored 82.9% on training data and 63.1% on test data (a 0.198 gap), which slightly deteriorated post-cleaning to an 83.1% train accuracy and a 62.1% test accuracy (a 0.210 gap). Because unconstrained decision trees naturally memorize patterns and noise, cleaning the raw features had a negligible effect on reducing variance, demonstrating that structural regularization—such as limiting tree depth—is necessary to improve generalization rather than relying solely on data preprocessing.
 
+Week 4:
+Both holdout and cross-validation have logistic regression as the best model, with validation accuracy of 67.1% and 67.2%. It have small train\validation gap that indicates small overfitting. Random forest and decision tree have higher training scores but lower validation results with larger gaps, that problably indicates overfitting. The dummy model provided only a 54.9% baseline and failed to identify any positive cases.
+
+On the locked test set, logistic regression achieved 66% accuracy, confirming that its performance generalizes reasonably well. But, it detected only 48% of positive cases, and its false-positive rate was higher for African-American individuals than for Caucasian individuals (28% vs 14%). So logistic regression is the strongest model tested, but its recall and limitations should be considered.
+
+Holdout and cross-validation produced similar rankings, both selecting logistic regression. However, cross-validation is more reliable because it evaluates each model across several data splits, while holdout depends on a single split and may produce less stable results.
+
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
