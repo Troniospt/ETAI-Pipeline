@@ -1,66 +1,32 @@
 """
-Preprocessing -- deliberately minimal for week 2.
+Preprocessing -- raw data in, model-ready data out: category cleanup, domain-rule/
+placeholder -> NaN conversion, de-duplication, mechanism-matched imputation, a
+leak-safe/deployable encoder/scaler pipeline, and the split that sets the final test
+set aside. One file, one obvious place to look for "how does raw data become model-ready."
 
-This is intentionally the weakest part of the pipeline:
-    - missing values are simply dropped (no imputation strategy)
-    - categorical columns are one-hot encoded with no thought given to unseen categories or cardinality
-    - a single train/test split is used (no cross-validation)
+See Practical/W4/notebooks/02_preprocessing.ipynb for the full walkthrough, and
+03_cross_validation.ipynb for why the split below now creates a *locked* test set.
 
-You will replace this with something better in the coming weeks.
-
-One thing that is NOT naive, on purpose: `sensitive_attr` (race) is kept out of the model's input features entirely. It's split alongside the data so it's still available afterwards -- not to train on, but to check whether the model treats different groups differently. See src/evaluate.py:fairness_report.
-"""
-import pandas as pd
-from sklearn.model_selection import train_test_split
-
-"""
-Data diagnostics -- generic, config-driven techniques for finding what's actually wrong with a dataset before preprocessing touches it: a tested missingness mechanism 
-per column, domain-rule invalid-value detection, and a two-way duplicate check.
-
-Built in week 3 -- see Practical/W3/notebooks/01_eda_introduction.ipynb for the full walkthrough these three functions are lifted from, applied to this course's real
-(deliberately messy) COMPAS data. Nothing here is hardcoded to COMPAS's column names; every column list and rule comes from config.yaml's `diagnostics` section, so this
-module works unchanged on a different dataset.
+Two things every function here respects, on purpose:
+  - leak-safe: `clean_dataset` and `split_features_target` learn nothing from the data
+    (no means, no category lists, no target), so they're safe to run on the whole
+    dataset. Everything that *is* learned from data -- imputation, encoding, scaling --
+    lives inside `build_preprocessor`'s ColumnTransformer, which sits inside the model's
+    sklearn Pipeline. That means it gets re-fit on the training part of every CV fold,
+    and never sees the validation fold or the locked test set.
+  - deployable from day one: nothing before the split needs the target column --
+    `y` comes back as `None` on label-free inference data, and nothing breaks.
 """
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency
-
-
-def _cramers_v(confusion_matrix: pd.DataFrame) -> float:
-    """Bias-corrected Cramer's V effect size for a chi-square test of association."""
-    chi2 = chi2_contingency(confusion_matrix)[0]
-    n = confusion_matrix.sum().sum()
-    phi2 = chi2 / n
-    r, k = confusion_matrix.shape
-    phi2_corr = max(0, phi2 - ((k - 1) * (r - 1)) / (n - 1))
-    r_corr = r - ((r - 1) ** 2) / (n - 1)
-    k_corr = k - ((k - 1) ** 2) / (n - 1)
-    return float(np.sqrt(phi2_corr / min(k_corr - 1, r_corr - 1)))
-
-
-def test_missingness_mechanism(df: pd.DataFrame, target_col: str, candidate_predictors: list) -> pd.DataFrame:
-    """
-    For `target_col`'s missing-value indicator, test association against each column in
-    `candidate_predictors` via chi-square + Cramer's V. Returns one row per predictor,
-    sorted by association strength (strongest first).
-
-    Reading the verdict: a max Cramer's V well under 0.1 across every predictor reads as
-    MCAR (missing completely at random -- safe to impute simply). Anything well above
-    that (roughly >= 0.2) reads as MAR/MNAR, and the top predictor usually points at why.
-    """
-    indicator = df[target_col].isna()
-    rows = []
-    for predictor in candidate_predictors:
-        if predictor == target_col or predictor not in df.columns:
-            continue
-        sub = pd.DataFrame({"missing": indicator, "predictor": df[predictor]}).dropna(subset=["predictor"])
-        if sub["predictor"].nunique() < 2 or sub["missing"].nunique() < 2:
-            continue
-        table = pd.crosstab(sub["missing"], sub["predictor"])
-        chi2, p, _, _ = chi2_contingency(table)
-        v = _cramers_v(table)
-        rows.append({"predictor": predictor, "cramers_v": round(v, 3), "p_value": p, "n": len(sub)})
-    return pd.DataFrame(rows).sort_values("cramers_v", ascending=False).reset_index(drop=True)
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.preprocessing import (
+    OneHotEncoder, OrdinalEncoder, TargetEncoder, StandardScaler, MinMaxScaler, RobustScaler,
+)
+from category_encoders import CountEncoder
 
 
 def flag_invalid_values(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
@@ -85,56 +51,11 @@ def flag_invalid_values(df: pd.DataFrame, rules: dict) -> pd.DataFrame:
     return pd.DataFrame(report_rows)
 
 
-def find_duplicates(df: pd.DataFrame, id_column: str = None) -> dict:
-    """
-    Checks duplicates two ways: exact row duplication, and (if `id_column` is given)
-    repeated identifiers. The two checks can disagree in general -- a duplicate case
-    re-entered with even one typo'd field would only be caught by the id check -- so
-    both are reported rather than trusting either one alone.
-    """
-    result = {"exact_row_duplicates": int(df.duplicated().sum())}
-    if id_column and id_column in df.columns:
-        result["repeated_ids"] = int(df[id_column].duplicated().sum())
-    return result
-
-
-def preprocess(
-    df: pd.DataFrame,
-    target: str,
-    sensitive_attr: str,
-    drop_columns: list,
-    test_size: float,
-    random_state: int,
-):
-    # naive: just drop rows with any missing values
-    df = df.dropna()
-
-    y = df[target]
-
-    # kept aside for fairness auditing after training -- never used as a model input
-    extras = df[[sensitive_attr, "score_text"]].copy()
-
-    columns_to_exclude = [target, sensitive_attr] + [
-        c for c in drop_columns if c in df.columns
-    ]
-    X = df.drop(columns=columns_to_exclude)
-
-    # naive: one-hot encode all non-numeric columns, no further thought
-    X = pd.get_dummies(X, drop_first=True)
-
-    X_train, X_test, y_train, y_test, extras_train, extras_test = train_test_split(
-        X, y, extras, test_size=test_size, random_state=random_state, stratify=y
-    )
-
-    return X_train, X_test, y_train, y_test, extras_test
-
-def find_placeholder_rows(series: pd.Series, tokens: set) -> pd.Series:
-    return series.astype(str).str.strip().isin(tokens)
-
-
-def canonicalize_categories(df: pd.DataFrame, columns_and_maps: dict, placeholder_tokens: set) -> pd.DataFrame:
+def _canonicalize_categories(df: pd.DataFrame, columns_and_maps: dict, placeholder_tokens: set) -> pd.DataFrame:
     out = df.copy()
     for col, mapping in columns_and_maps.items():
+        if col not in out.columns:
+            continue
         cleaned = out[col].astype(str).str.strip()
         lowered = cleaned.str.lower()
         out[col] = lowered.map(mapping).fillna(cleaned)
@@ -144,9 +65,13 @@ def canonicalize_categories(df: pd.DataFrame, columns_and_maps: dict, placeholde
 
 def clean_dataset(df: pd.DataFrame, diagnostics_config: dict) -> pd.DataFrame:
     """
-    Applies this week's diagnosis: category cleanup, domain-rule/placeholder -> NaN
-    conversion, de-duplication, and redundant-column removal. Target-agnostic -- safe
-    to call on label-free inference data, since none of this depends on a target column.
+    Applies the week 3 diagnosis: category cleanup, domain-rule/placeholder -> NaN
+    conversion, and redundant-column removal. Target-agnostic -- safe to call on
+    label-free inference data, since none of this depends on a target column.
+
+    Row-preserving (week 4): every input row comes out, in the same order. Removing
+    duplicate rows is a *training-only* decision and lives in `drop_duplicate_rows()` --
+    at prediction time every row needs a prediction (a Kaggle submission needs one per id).
     """
     out = df.copy()
     placeholder_tokens = set(diagnostics_config.get("placeholder_tokens", []))
@@ -158,15 +83,125 @@ def clean_dataset(df: pd.DataFrame, diagnostics_config: dict) -> pd.DataFrame:
 
     flag_invalid_values(out, diagnostics_config.get("validity_rules", {}))
 
-    out = canonicalize_categories(out, diagnostics_config.get("canonical_categories", {}), placeholder_tokens)
-
-    out = out.drop_duplicates()
-    id_column = diagnostics_config.get("id_column")
-    if id_column and id_column in out.columns:
-        out = out.drop_duplicates(subset=id_column, keep="first")
+    out = _canonicalize_categories(out, diagnostics_config.get("canonical_categories", {}), placeholder_tokens)
 
     columns_to_drop = [c for c in diagnostics_config.get("redundant_columns", []) if c in out.columns]
     out = out.drop(columns=columns_to_drop)
 
     return out
 
+
+def drop_duplicate_rows(df: pd.DataFrame, id_column: str = None) -> pd.DataFrame:
+    """
+    TRAINING DATA ONLY (week 4). Drops exact duplicate rows and repeated ids (keeping
+    the first), so the same person can't be counted twice -- or land in both the
+    development and the locked test set. Must run *before* `split_dev_test()`.
+
+    Never call this on data you're predicting for: every row there needs a prediction.
+    """
+    out = df.drop_duplicates()
+    if id_column and id_column in out.columns:
+        out = out.drop_duplicates(subset=id_column, keep="first")
+    return out
+
+
+def add_missingness_indicators(df: pd.DataFrame, mnar_indicator_sources: list) -> pd.DataFrame:
+    """Adds a `<col>_was_missing` flag for each MNAR-diagnosed column, before that
+    column gets imputed -- so a model can still see the pattern even though the fill
+    value itself (median/mode) can't carry it. Target-agnostic."""
+    out = df.copy()
+    for col in mnar_indicator_sources:
+        if col in out.columns:
+            out[f"{col}_was_missing"] = out[col].isna().astype(int)
+    return out
+
+
+def split_features_target(df: pd.DataFrame, data_config: dict, mnar_indicator_sources: list):
+    """
+    Returns (X, y, extras). `y` is `None` and `extras` has no target column when called
+    on label-free inference data -- nothing downstream requires the target to be present.
+    """
+    target = data_config["target"]
+    sensitive_attr = data_config["sensitive_attr"]
+    drop_columns = data_config.get("drop_columns", [])
+
+    df = add_missingness_indicators(df, mnar_indicator_sources)
+    y = df[target] if target in df.columns else None
+
+    extras_cols = [c for c in [sensitive_attr, "score_text"] if c in df.columns]
+    extras = df[extras_cols].copy() if extras_cols else None
+
+    always_drop = set(drop_columns) | {target, sensitive_attr}
+    feature_cols = [c for c in df.columns if c not in always_drop]
+    X = df[feature_cols]
+    return X, y, extras
+
+
+_SCALERS = {"none": "passthrough", "standard": StandardScaler, "minmax": MinMaxScaler, "robust": RobustScaler}
+# Each entry takes a random_state (only the target encoder actually uses it).
+# Target encoding uses sklearn's TargetEncoder (new in week 4, replacing category_encoders'):
+# during fit it *cross-fits* -- each training row is encoded with category means computed
+# on the OTHER internal folds, never on its own label. Without that, a row's own target
+# leaks into its own feature value, and the model learns to trust the encoding more than
+# it deserves. Unseen categories at predict time get the overall target mean.
+_ENCODERS = {
+    "onehot": lambda seed: OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+    "ordinal": lambda seed: OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+    "count": lambda seed: CountEncoder(handle_unknown=0, handle_missing=0),
+    "target": lambda seed: TargetEncoder(target_type="binary", cv=StratifiedKFold(5, shuffle=True, random_state=seed)),
+}
+
+
+def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
+    """
+    Factory: builds a leak-safe ColumnTransformer for the chosen encoder/scaler pair --
+    read from `config.yaml`'s `preprocessing` section (chosen there, not hardcoded
+    here). Every encoder tolerates unseen
+    categories at transform time. Nothing is fit here: fitting happens later, on the
+    training part of each CV fold only, because this object is placed *inside* the
+    model's sklearn Pipeline (see main.py).
+    """
+    encoder_name = preprocessing_config["encoder"]
+    scaler_name = preprocessing_config["scaler"]
+    numeric_features = preprocessing_config["numeric_features"]
+    categorical_features = preprocessing_config["categorical_features"]
+    mnar_indicator_sources = preprocessing_config.get("mnar_indicator_sources", [])
+    imputation = preprocessing_config.get("imputation", {})
+
+    scaler_factory = _SCALERS[scaler_name]
+    scaler = scaler_factory() if callable(scaler_factory) else scaler_factory
+    encoder = _ENCODERS[encoder_name](preprocessing_config.get("random_state"))
+
+    numeric_pipeline = Pipeline([
+        ("impute", SimpleImputer(strategy=imputation.get("numeric_strategy", "median"))),
+        ("scale", scaler),
+    ])
+    categorical_pipeline = Pipeline([
+        ("impute", SimpleImputer(strategy=imputation.get("categorical_strategy", "most_frequent"))),
+        ("encode", encoder),
+    ])
+
+    indicator_cols = [f"{c}_was_missing" for c in mnar_indicator_sources]
+
+    return ColumnTransformer([
+        ("numeric", numeric_pipeline, numeric_features),
+        ("categorical", categorical_pipeline, categorical_features),
+        ("indicators", "passthrough", indicator_cols),
+    ])
+
+
+def split_dev_test(X, y, extras, test_size: float, random_state: int):
+    """
+    Sets the final test set aside (week 4 -- replaces week 2/3's `split_train_test`).
+
+    Stratified split of X, y and the extras frame (race/score_text, kept for the fairness
+    report) together, so all three stay row-aligned. Returns a *development* set and a
+    *locked test set*:
+      - development set: everything we're allowed to learn from and compare models on.
+        Cross-validation (src/evaluate.py) splits it again into train/validation folds.
+      - locked test set: never used to fit, tune, compare or choose anything. Its size and seed live in config.yaml's `test_set` section and are never changed after today.
+    """
+    X_dev, X_test, y_dev, y_test, extras_dev, extras_test = train_test_split(
+        X, y, extras, test_size=test_size, random_state=random_state, stratify=y
+    )
+    return X_dev, X_test, y_dev, y_test, extras_dev, extras_test
