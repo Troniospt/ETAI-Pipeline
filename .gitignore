@@ -1,7 +1,12 @@
 venv/
+venv_broken/
+.uv-cache/
+.uv-python/
 __pycache__/
 *.pyc
 .DS_Store
 .ipynb_checkpoints/
 *.egg-info/
 results/
+.tmp_zip_extract/
+.tmp_week5/

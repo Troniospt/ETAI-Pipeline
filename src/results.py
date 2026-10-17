@@ -23,6 +23,13 @@ def save_run(results_dir: str, config: dict, report_text: str) -> str:
     model_summary = ", ".join(
         f"{model['type']} params={model.get('params', {})}" for model in models
     )
+    tuning = config.get("tuning", {})
+    tuning_summary = (
+        f"enabled={tuning.get('enabled', False)}  "
+        f"n_trials={tuning.get('n_trials', 'n/a')}  "
+        f"n_splits={tuning.get('n_splits', 'n/a')}  "
+        f"random_state={tuning.get('random_state', 'n/a')}"
+    )
     header = (
         f"Run: {timestamp}\n"
         f"Models: {model_summary}\n"
@@ -30,6 +37,7 @@ def save_run(results_dir: str, config: dict, report_text: str) -> str:
         f"scaler={config['preprocessing']['scaler']}\n"
         f"CV: {cv['n_splits']} stratified folds  shuffle={cv.get('shuffle', True)}  "
         f"random_state={cv.get('random_state')}  metric={cv.get('scoring', 'accuracy')}\n"
+        f"Tuning: {tuning_summary}\n"
         f"Locked test set: size={config['test_set']['size']}  "
         f"random_state={config['test_set']['random_state']}  (final model only)\n"
         + "=" * 60 + "\n\n"

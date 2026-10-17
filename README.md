@@ -20,6 +20,16 @@ On the locked test set, logistic regression achieved 66% accuracy, confirming th
 
 Holdout and cross-validation produced similar rankings, both selecting logistic regression. However, cross-validation is more reliable because it evaluates each model across several data splits, while holdout depends on a single split and may produce less stable results.
 
+WEEK 5:
+Hyperparameter tuning greatly improved the Decision Tree. With its default settings, the model obtained 61.0% validation accuracy and showed a large train-validation gap of 0.085, indicating overfitting. After Optuna tuning, its nested cross-validation accuracy increased to 67.2% with a much smaller gap of 0.013. The selected configuration used a maximum depth of 6, a minimum of 101 samples per leaf, and the Gini criterion. This confirms that limiting the size of the tree helps it generalize instead of memorizing the development data.
+
+The Random Forest also benefited from tuning, increasing from 65.0% to 68.1% nested cross-validation accuracy while reducing its gap from 0.082 to 0.009. Its best configuration used a maximum depth of 22, 42 samples per leaf, and half of the available features at each split. The best-trial tuning scores were slightly higher than the honest nested scores, but the optimism was only 0.002 for the Decision Tree and 0.001 for the Random Forest. Therefore, the nested cross-validation results are the numbers that should be reported, since they evaluate the complete tuning procedure on folds that were not used to choose the hyperparameters.
+
+WEEK 6:
+The ensemble comparison showed that tuning was most useful for the two forest models. Random Forest improved from 65.0% to 68.1%, while Oblique Random Forest improved from 64.7% to 67.9% and reduced its large default overfitting gap from 0.114 to 0.013. AdaBoost already performed well with its default shallow trees, obtaining 67.6%, and tuning produced a smaller improvement to 68.2%. Its final configuration used trees of depth 4, 220 estimators, and a learning rate of 0.025.
+
+AdaBoost achieved the highest nested cross-validation mean, but its advantage over Random Forest was only 0.001, which is much smaller than the fold-to-fold standard deviations of 0.017 and 0.015. The tuned ensembles should therefore be considered practically tied rather than treating AdaBoost as a clear winner. I would report AdaBoost's honest nested score of 68.2% ± 1.7% as the numerical best result, while noting that Random Forest is an equally reasonable choice and that all models appear to be approaching the performance limit of the available features.
+
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
@@ -52,11 +62,42 @@ go on.
 
 ## Pipeline progress
 
-This table is updated after each practical class, so you can always see what changed in the pipeline and why -- it's a running log, not a fixed syllabus.
 
 | Week | Practical class focus | Added to the pipeline |
 |------|------------------------|------------------------|
 | 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/` |
+| 3 | Data quality and cleaning | Config-driven validity rules, category canonicalisation, placeholder handling, duplicate removal, and missingness indicators. |
+| 4 | Preprocessing and cross-validation | Leakage-safe preprocessing inside a scikit-learn pipeline, a locked test set, stratified CV, out-of-fold reports, and comparison of baseline models. |
+| 5 | Hyperparameter tuning | Optuna search spaces and nested cross-validation so tuned models are assessed on outer folds that were not used to choose their parameters. |
+| 6 | Ensembles | Random forest, an oblique random-projection forest, and AdaBoost, with model-specific nested-CV search spaces. |
+
+## Model evaluation
+
+### Hyperparameter tuning
+
+The pipeline uses Optuna to sample each model's configured search space. Every candidate is evaluated by five inner folds of the complete preprocessing/model pipeline, while five outer folds estimate the performance of the tuning procedure without reusing the data that chose the hyperparameters. The default configuration uses 30 trials; the best-trial score selects parameters, but the nested-CV score is the number reported for model comparison because it corrects the winner's-curse optimism.
+
+| Model | Default: CV mean ± std | Tuned: nested CV mean ± std | Tuning score (best trial) | Optimism | Chosen hyperparameters |
+|---|---:|---:|---:|---:|---|
+| Decision tree | 0.610 ± 0.018 | 0.672 ± 0.017 | 0.679 | +0.002 | `max_depth=6`, `min_samples_leaf=101`, `criterion=gini` |
+| Logistic regression | 0.672 ± 0.013 | — | — | — | — |
+| Random forest | 0.650 ± 0.019 | 0.681 ± 0.015 | 0.683 | +0.001 | `max_depth=22`, `min_samples_leaf=42`, `max_features=0.5` |
+
+Tuning substantially improves the decision tree and random forest, by about 0.062 and 0.031 respectively—both larger than their default fold-to-fold standard deviations. Logistic regression was not tuned in the supplied run. Tuning changes the tree from a clearly overfitting model into one competitive with logistic regression, while the tuned random forest is slightly ahead; the nested-CV result is the appropriate performance estimate to report.
+
+### Ensembles
+
+The default and nested-CV values reproduce the supplied class notebook and pre-run folds. The tuning scores and final hyperparameters come from this repository's completed 30-trial `python main.py` runs on 17 October 2026.
+
+| Model | Default: CV mean ± std (gap) | Tuned: nested CV mean ± std (gap) | Tuning score (best trial) | Chosen hyperparameters |
+|---|---:|---:|---:|---|
+| Logistic regression | 0.672 ± 0.013 (+0.003) | — | — | — |
+| Decision tree | 0.610 ± 0.018 (+0.085) | 0.672 ± 0.017 (+0.013) | 0.679 | `max_depth=6`, `min_samples_leaf=101`, `criterion=gini` |
+| Random forest | 0.650 ± 0.019 (+0.082) | 0.681 ± 0.015 (+0.009) | 0.683 | `max_depth=22`, `min_samples_leaf=42`, `max_features=0.5` |
+| Oblique random forest | 0.647 ± 0.011 (+0.114) | 0.679 ± 0.013 (+0.013) | 0.683 | `max_depth=6`, `min_samples_leaf=3`, `n_components=5` |
+| AdaBoost | 0.676 ± 0.012 (+0.006) | 0.682 ± 0.017 (+0.004) | 0.684 | `max_depth=4`, `n_estimators=220`, `learning_rate=0.025` |
+
+AdaBoost has the highest nested-CV mean, but its lead over random forest is only 0.001, far below either model's fold-to-fold standard deviation. The three tuned ensembles are therefore effectively tied on these folds; selecting AdaBoost as an unequivocal winner would overstate the evidence. Tuning chiefly helps the default forests, whose deep trees overfit, while default AdaBoost with shallow stumps is already well controlled. The number to report for model comparison is the honest nested-CV score—not the best tuning-trial score—with AdaBoost at 0.682 ± 0.017 as the narrow numerical leader.
 
 ## Environment setup
 
